@@ -1,51 +1,58 @@
-# Copyright (c) Streamlit Inc. (2018-2022) Snowflake Inc. (2022)
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import streamlit as st
-from streamlit.logger import get_logger
+import pandas as pd
+from io import StringIO
 
-LOGGER = get_logger(__name__)
+def process_data(df, window_size):
+    # Convert 'Price' to numeric, calculate moving average, and signal
+    df['Price'] = pd.to_numeric(df['Price'].str.replace(',', ''), errors='coerce')
+    df['Moving_Average'] = df['Price'].rolling(window=window_size).mean()
+    df['Signal'] = df.apply(lambda row: 'Buy' if row['Price'] > row['Moving_Average'] else 'Sell', axis=1)
+    
+    # Add 'Decision' column
+    df['Decision'] = df['Signal'].where(df['Signal'] != df['Signal'].shift(), 'Hold')
+    
+    # Filter data based on Decision
+    df = df[df['Decision'].isin(['Buy', 'Sell']) & df['Moving_Average'].notnull()]
+    
+    # Add 'Diff' column
+    df['Next_Price'] = df['Price'].shift(-1)
+    df['Diff'] = df.apply(lambda row: row['Price'] - row['Next_Price'] if row['Decision'] == 'Buy' else row['Next_Price'] - row['Price'], axis=1)
+    df = df.drop(columns=['Next_Price'])
 
+    return df
 
-def run():
-    st.set_page_config(
-        page_title="Hello",
-        page_icon="👋",
-    )
+def to_csv(df):
+    output = StringIO()
+    df.to_csv(output, index=False)
+    return output.getvalue()
 
-    st.write("# Welcome to Streamlit! 👋")
+def display_statistics(df):
+    st.write("Sum of Diff: ", df['Diff'].sum())
+    st.write("Mean of Diff: ", df['Diff'].mean())
+    st.write("Max of Diff: ", df['Diff'].max())
+    st.write("Min of Diff: ", df['Diff'].min())
 
-    st.sidebar.success("Select a demo above.")
+def main():
+    st.title("Nifty 50 Data Processor")
 
-    st.markdown(
-        """
-        Streamlit is an open-source app framework built specifically for
-        Machine Learning and Data Science projects.
-        **👈 Select a demo from the sidebar** to see some examples
-        of what Streamlit can do!
-        ### Want to learn more?
-        - Check out [streamlit.io](https://streamlit.io)
-        - Jump into our [documentation](https://docs.streamlit.io)
-        - Ask a question in our [community
-          forums](https://discuss.streamlit.io)
-        ### See more complex demos
-        - Use a neural net to [analyze the Udacity Self-driving Car Image
-          Dataset](https://github.com/streamlit/demo-self-driving)
-        - Explore a [New York City rideshare dataset](https://github.com/streamlit/demo-uber-nyc-pickups)
-    """
-    )
+    # Slider for selecting moving average window size
+    window_size = st.slider('Select Moving Average Window Size', 5, 200, 50)
 
+    # File uploader
+    file = st.file_uploader("Upload your Nifty 50 Historical Data CSV", type=["csv"])
+    if file is not None:
+        data = pd.read_csv(file)
+        processed_data = process_data(data, window_size)
+
+        # Display statistics
+        display_statistics(processed_data)
+
+        # Download button
+        if st.download_button(label="Download Processed Data as CSV",
+                              data=to_csv(processed_data),
+                              file_name='processed_nifty_50_data.csv',
+                              mime='text/csv'):
+            st.success('File has been downloaded!')
 
 if __name__ == "__main__":
-    run()
+    main()
